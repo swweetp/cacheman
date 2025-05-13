@@ -1,0 +1,12 @@
+[Unit]
+Description=Share pacman cache across hosts
+Requires=avahi-daemon.service
+Wants=network-online.target
+After=avahi-daemon.service network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cacheman
+
+[Install]
+WantedBy=multi-user.target
