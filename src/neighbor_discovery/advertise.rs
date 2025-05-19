@@ -41,7 +41,7 @@ impl Advertiser {
     pub fn terminate(self) {
         self.sender.send(()).unwrap()
     }
-    #[must_use]
+    #[must_use = "If you want to terminate the advertiser in place, use 'Advertiser::terminate()' instead"]
     pub fn terminate_handle(self) -> AdvertiserTerminateHandle {
         AdvertiserTerminateHandle(Some(self))
     }
