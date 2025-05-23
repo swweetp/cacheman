@@ -15,7 +15,7 @@ use anyhow::{Context, Result, ensure};
 use get_pacman_configuration::{cache_dir::get_cache_dirs, upstream_url::get_all_repository_urls};
 use neighbor_discovery::{advertise::Advertiser, browse::Browser};
 use reqwest::Client;
-use service::service_proxy;
+use service::{ProxyService, service_proxy};
 use tokio::spawn;
 
 mod get_pacman_configuration;
@@ -55,7 +55,6 @@ async fn main() -> Result<()> {
     );
     // TODO: 複数キャッシュディレクトリに対応
     let pacman_cache_dir = pacman_cache_dirs[0].clone();
-    // TODO: 複数リポジトリに対応
     let mut upstream_urls = get_all_repository_urls(None)
         .await
         .context("Failed to get upstream URLs")?;
@@ -80,7 +79,6 @@ async fn main() -> Result<()> {
 
         *urls = new_urls;
     }
-    let upstream_urls = Data::new(upstream_urls);
 
     let _advertiser = Advertiser::new(
         hostname::get()?
@@ -94,7 +92,10 @@ async fn main() -> Result<()> {
     for peer in Browser::new().await?.get_updated_items().await? {
         peer_list.insert(peer.hostname, PORT);
     }
-    let peer_list = Data::new(Mutex::new(peer_list));
+    let proxy_service = Data::new(ProxyService::new(
+        Mutex::new(peer_list.clone()),
+        upstream_urls.clone(),
+    ));
 
     HttpServer::new(move || {
         actix_web::App::new()
@@ -113,8 +114,7 @@ async fn main() -> Result<()> {
                         };
                         addr.ip().is_loopback()
                     }))
-                    .app_data(peer_list.clone())
-                    .app_data(upstream_urls.clone())
+                    .app_data(proxy_service.clone())
                     .service(service_proxy),
             )
     })
