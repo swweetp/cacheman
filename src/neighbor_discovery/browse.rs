@@ -8,13 +8,15 @@ use std::{
 };
 
 use anyhow::{Result, ensure};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use tokio::{
     spawn,
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 use zbus::Connection;
+
+use crate::neighbor_discovery::zbus_binding::service_browser::{ItemNew, ItemRemove};
 
 use super::{
     DESTINATION, SERVICE_TYPE,
@@ -52,57 +54,51 @@ impl Browser {
         let current_items = Arc::new(Mutex::new(HashSet::new()));
         let mut callback_handles = Vec::new();
 
-        let mut item_new = browser.receive_item_new().await?;
-        let h = spawn({
-            let current_items = Arc::clone(&current_items);
-            async move {
-                while let Some(item) = item_new.next().await {
-                    let item = item.args()?;
-                    let hostname = item.name.to_string();
-                    current_items.lock().unwrap().insert(HostInfo { hostname });
-                }
-                || -> Result<Infallible> { unreachable!() }()
-            }
-        });
-        callback_handles.push(h);
+        let handle = add_callback(
+            browser.receive_item_new().await?,
+            |item: ItemNew, current_items: &Arc<Mutex<HashSet<HostInfo>>>| {
+                let item = item.args()?;
+                let hostname = item.name.to_string();
+                current_items.lock().unwrap().insert(HostInfo { hostname });
+                Ok(())
+            },
+            Arc::clone(&current_items),
+        );
+        callback_handles.push(handle);
 
-        let mut item_remove = browser.receive_item_remove().await?;
-        let h = spawn({
-            let current_items = Arc::clone(&current_items);
-            async move {
-                while let Some(item) = item_remove.next().await {
-                    let item = item.args()?;
-                    let hostname = item.name.to_string();
-                    current_items.lock().unwrap().remove(&HostInfo { hostname });
-                }
-                || -> Result<Infallible> { unreachable!() }()
-            }
-        });
-        callback_handles.push(h);
+        let handle = add_callback(
+            browser.receive_item_remove().await?,
+            |item: ItemRemove, current_items: &Arc<Mutex<HashSet<HostInfo>>>| {
+                let item = item.args()?;
+                let hostname = item.name.to_string();
+                current_items.lock().unwrap().remove(&HostInfo { hostname });
+                Ok(())
+            },
+            Arc::clone(&current_items),
+        );
+        callback_handles.push(handle);
 
-        let mut all_for_now = browser.receive_all_for_now().await?;
         let (change_sender, change_receiver) = mpsc::channel(1);
-        let h = spawn({
-            async move {
-                while let Some(_) = all_for_now.next().await {
-                    let _ = change_sender.try_send(());
-                }
-                || -> Result<Infallible> { unreachable!() }()
-            }
-        });
-        callback_handles.push(h);
+        let handle = add_callback(
+            browser.receive_all_for_now().await?,
+            |_, tx| {
+                let _ = tx.try_send(());
+                Ok(())
+            },
+            change_sender,
+        );
+        callback_handles.push(handle);
+
         let is_failed = Arc::new(AtomicBool::new(false));
-        let mut on_failure = browser.receive_failure().await?;
-        let h = spawn({
-            let is_failed = Arc::clone(&is_failed);
-            async move {
-                while let Some(_) = on_failure.next().await {
-                    is_failed.store(true, Ordering::SeqCst);
-                }
-                || -> Result<Infallible> { unreachable!() }()
-            }
-        });
-        callback_handles.push(h);
+        let handle = add_callback(
+            browser.receive_failure().await?,
+            |_, is_failed| {
+                is_failed.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            Arc::clone(&is_failed),
+        );
+        callback_handles.push(handle);
 
         browser.start().await?;
 
@@ -138,6 +134,20 @@ impl Drop for Browser {
         }
         self.terminate_sender.take().unwrap().send(()).unwrap();
     }
+}
+fn add_callback<T, U: Send + 'static>(
+    mut stream: impl Stream<Item = T> + Unpin + Send + 'static,
+    mut callback: impl FnMut(T, &U) -> Result<()> + Send + 'static,
+    state: U,
+) -> JoinHandle<Result<Infallible>> {
+    spawn({
+        async move {
+            while let Some(item) = stream.next().await {
+                callback(item, &state)?;
+            }
+            unreachable!()
+        }
+    })
 }
 
 #[cfg(test)]

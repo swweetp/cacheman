@@ -15,7 +15,7 @@ use anyhow::{Context, Result, ensure};
 use get_pacman_configuration::{cache_dir::get_cache_dirs, upstream_url::get_all_repository_urls};
 use neighbor_discovery::{advertise::Advertiser, browse::Browser};
 use reqwest::Client;
-use service::{ProxyService, service_proxy};
+use service::{peer_cache_router::PeerCacheRouter, service_proxy};
 use tokio::spawn;
 
 mod get_pacman_configuration;
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     for peer in Browser::new().await?.get_updated_items().await? {
         peer_list.insert(peer.hostname, PORT);
     }
-    let proxy_service = Data::new(ProxyService::new(
+    let proxy_service = Data::new(PeerCacheRouter::new(
         Mutex::new(peer_list.clone()),
         upstream_urls.clone(),
     ));
