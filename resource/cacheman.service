@@ -1,8 +1,8 @@
 [Unit]
 Description=Share pacman cache across hosts
 Requires=avahi-daemon.service
-Wants=network-online.target
-After=avahi-daemon.service network-online.target
+Wants=network.target
+After=avahi-daemon.service network.target
 
 [Service]
 Type=simple

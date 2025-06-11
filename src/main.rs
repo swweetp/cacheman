@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     }
     let upstream_urls = Data::new(upstream_urls);
 
-    let _advertiser = Advertiser::new(
+    Advertiser::new(
         hostname::get()?
             .to_str()
             .context("Failed to get hostname")?,
